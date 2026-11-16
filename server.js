@@ -1,14 +1,14 @@
 const express = require('express');
 const mongoose = require('mongoose');
 const cors = require('cors');
+const crypto = require('crypto');
 
 const app = express();
 app.use(cors());
-app.use(express.json());
+app.use(express.json({ limit: '5mb' }));
 
-// Aapka MongoDB Atlas URI (lionbot database ke saath)
 const MONGO_URI = process.env.MONGODB_URI || "mongodb+srv://hlomoto110_db_user:BWZQu4H2F6Lqgmfq@lionautobet.xl7iyuw.mongodb.net/lionbot?retryWrites=true&w=majority&appName=LionAutoBet";
-const ADMIN_SECRET = "LION_ADMIN_2026"; // Admin Panel Password
+const ADMIN_SECRET = process.env.ADMIN_SECRET || "LION_ADMIN_2026";
 
 mongoose.connect(MONGO_URI)
   .then(() => console.log("✅ MongoDB Connected to LionAutoBet Cluster!"))
@@ -44,12 +44,10 @@ async function ensureDefaultSettings() {
 }
 ensureDefaultSettings();
 
-// --- HEALTH CHECK ---
 app.get('/', (req, res) => {
-  res.send("🦁 LION AUTO BOT MongoDB API is Running!");
+  res.send("🦁 LION AUTO BOT MongoDB API v2.0 is Running!");
 });
 
-// --- APP & ADMIN API ENDPOINT ---
 app.all('/api', async (req, res) => {
   const action = req.query.action;
 
@@ -73,15 +71,18 @@ app.all('/api', async (req, res) => {
       return res.json({ status: 'success', user: newUser });
     }
 
-    // 2. LOGIN
+    // 2. LOGIN (Supports SHA-256 & Legacy Plain Text)
     if (action === 'login' && req.method === 'POST') {
       const { user, pass } = req.body;
       const foundUser = await User.findOne({
-        $or: [{ email: user }, { phone: user }, { user_id: user }],
-        pass: pass
+        $or: [{ email: user }, { phone: user }, { user_id: user }]
       });
       if (!foundUser) {
-        return res.json({ status: 'error', message: 'Invalid Email/Phone or Password!' });
+        return res.json({ status: 'error', message: 'Account not found!' });
+      }
+      const shaPass = crypto.createHash('sha256').update(String(foundUser.pass)).digest('hex');
+      if (foundUser.pass !== pass && shaPass !== pass) {
+        return res.json({ status: 'error', message: 'Incorrect Password!' });
       }
       return res.json({
         status: 'success',
@@ -107,35 +108,50 @@ app.all('/api', async (req, res) => {
       return res.json(cfg || {});
     }
 
-    // --- ADMIN ROUTES (Requires Admin Key) ---
+    // --- ADMIN ROUTES ---
     const adminKey = req.headers['x-admin-key'] || req.query.adminKey;
     if (action && action.startsWith('admin_')) {
       if (adminKey !== ADMIN_SECRET) {
         return res.status(401).json({ status: 'error', message: 'Unauthorized Admin Key!' });
       }
 
-      // Get All Users & Settings
       if (action === 'admin_dashboard') {
         const users = await User.find().sort({ createdAt: -1 });
         const settings = await Settings.findOne({ key: "global" });
         return res.json({ status: 'success', users, settings });
       }
 
-      // Approve / Ban User
       if (action === 'admin_toggle_user' && req.method === 'POST') {
         const { id, approved } = req.body;
         await User.findByIdAndUpdate(id, { approved });
         return res.json({ status: 'success' });
       }
 
-      // Delete User
+      if (action === 'admin_bulk_approve' && req.method === 'POST') {
+        const { approved } = req.body;
+        await User.updateMany({}, { approved });
+        return res.json({ status: 'success' });
+      }
+
+      if (action === 'admin_reset_password' && req.method === 'POST') {
+        const { id, newPass } = req.body;
+        const hashed = crypto.createHash('sha256').update(String(newPass)).digest('hex');
+        await User.findByIdAndUpdate(id, { pass: hashed });
+        return res.json({ status: 'success' });
+      }
+
+      if (action === 'admin_reset_device' && req.method === 'POST') {
+        const { id } = req.body;
+        await User.findByIdAndUpdate(id, { deviceId: 'RESET_BY_ADMIN', ip: '0.0.0.0' });
+        return res.json({ status: 'success' });
+      }
+
       if (action === 'admin_delete_user' && req.method === 'POST') {
         const { id } = req.body;
         await User.findByIdAndDelete(id);
         return res.json({ status: 'success' });
       }
 
-      // Update Broadcast / Force Off / Version
       if (action === 'admin_update_settings' && req.method === 'POST') {
         const { broadcast_msg, force_off, version, release_notes, update_script, force_update } = req.body;
         await Settings.findOneAndUpdate(
