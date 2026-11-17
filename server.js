@@ -34,7 +34,8 @@ const settingsSchema = new mongoose.Schema({
   version: { type: Number, default: 10 },
   release_notes: { type: String, default: "" },
   update_script: { type: String, default: "" },
-  force_update: { type: Boolean, default: false }
+  force_update: { type: Boolean, default: false },
+  update_repeat: { type: Number, default: 1 }
 });
 const Settings = mongoose.model('Settings', settingsSchema);
 
@@ -153,10 +154,30 @@ app.all('/api', async (req, res) => {
       }
 
       if (action === 'admin_update_settings' && req.method === 'POST') {
-        const { broadcast_msg, force_off, version, release_notes, update_script, force_update } = req.body;
+        const {
+          broadcast_msg,
+          force_off,
+          version,
+          release_notes,
+          update_script,
+          force_update,
+          update_repeat,
+          max_prompts
+        } = req.body;
+
+        const repeatLimit = Math.max(1, parseInt(update_repeat || max_prompts || 1, 10));
+
         await Settings.findOneAndUpdate(
           { key: "global" },
-          { broadcast_msg, force_off, version, release_notes, update_script, force_update },
+          {
+            broadcast_msg,
+            force_off,
+            version,
+            release_notes,
+            update_script,
+            force_update,
+            update_repeat: repeatLimit
+          },
           { upsert: true }
         );
         return res.json({ status: 'success' });
